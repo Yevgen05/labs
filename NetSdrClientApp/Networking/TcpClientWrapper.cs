@@ -52,8 +52,7 @@ namespace NetSdrClientApp.Networking
                 _cts?.Cancel();
                 _stream?.Close();
                 _tcpClient?.Close();
-
-                _cts = null!;
+                _cts?.Dispose();
                 _tcpClient = null!;
                 _stream = null!;
                 Console.WriteLine("Disconnected.");
@@ -62,6 +61,7 @@ namespace NetSdrClientApp.Networking
             {
                 Console.WriteLine("No active connection to disconnect.");
             }
+            
         }
 
         public async Task SendMessageAsync(byte[] data)
