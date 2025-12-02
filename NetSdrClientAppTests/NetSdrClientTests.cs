@@ -6,7 +6,7 @@ namespace NetSdrClientAppTests;
 
 public class NetSdrClientTests
 {
-    NetSdrClient _client;
+   NetSdrClient _client;
     Mock<ITcpClient> _tcpMock;
     Mock<IUdpClient> _updMock;
 
@@ -116,4 +116,169 @@ public class NetSdrClientTests
     }
 
     //TODO: cover the rest of the NetSdrClient code here
+}
+
+// ============================
+// ДОДАНО НОВІ ТЕСТИ
+// ============================
+
+[TestFixture]
+public class TcpClientWrapperTests
+{
+    [Test]
+    public void Constructor_WithHostAndPort_ShouldInitializeCorrectly()
+    {
+        // Arrange
+        string host = "localhost";
+        int port = 8080;
+
+        // Act
+        var wrapper = new TcpClientWrapper(host, port);
+
+        // Assert
+        Assert.IsNotNull(wrapper);
+    }
+
+    [Test]
+    public void Connected_WhenNotConnected_ShouldReturnFalse()
+    {
+        // Arrange
+        var wrapper = new TcpClientWrapper("localhost", 8080);
+
+        // Act
+        bool connected = wrapper.Connected;
+
+        // Assert
+        Assert.IsFalse(connected);
+    }
+
+    [Test]
+    public void SendMessageAsync_WhenNotConnected_ShouldThrowInvalidOperationException()
+    {
+        // Arrange
+        var wrapper = new TcpClientWrapper("localhost", 8080);
+        var data = new byte[] { 0x01, 0x02, 0x03 };
+
+        // Act & Assert
+        Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await wrapper.SendMessageAsync(data)
+        );
+    }
+
+    [Test]
+    public void Disconnect_WhenNotConnected_ShouldNotThrowException()
+    {
+        // Arrange
+        var wrapper = new TcpClientWrapper("localhost", 8080);
+
+        // Act & Assert
+        Assert.DoesNotThrow(() => wrapper.Disconnect());
+    }
+}
+
+[TestFixture]
+public class UdpClientWrapperTests
+{
+    [Test]
+    public void Constructor_WithPort_ShouldInitialize()
+    {
+        // Arrange
+        int testPort = 5000;
+
+        // Act
+        var wrapper = new UdpClientWrapper(testPort);
+
+        // Assert
+        Assert.IsNotNull(wrapper);
+    }
+
+    [Test]
+    public void GetHashCode_ForSamePort_ShouldReturnSameValue()
+    {
+        // Arrange
+        var wrapper1 = new UdpClientWrapper(5000);
+        var wrapper2 = new UdpClientWrapper(5000);
+
+        // Act
+        int hash1 = wrapper1.GetHashCode();
+        int hash2 = wrapper2.GetHashCode();
+
+        // Assert
+        Assert.AreEqual(hash1, hash2);
+    }
+
+    [Test]
+    public void GetHashCode_ForDifferentPorts_ShouldReturnDifferentValues()
+    {
+        // Arrange
+        var wrapper1 = new UdpClientWrapper(5000);
+        var wrapper2 = new UdpClientWrapper(5001);
+
+        // Act
+        int hash1 = wrapper1.GetHashCode();
+        int hash2 = wrapper2.GetHashCode();
+
+        // Assert
+        Assert.AreNotEqual(hash1, hash2);
+    }
+
+    [Test]
+    public void StopListening_WhenNotStarted_ShouldNotThrowException()
+    {
+        // Arrange
+        var wrapper = new UdpClientWrapper(5000);
+
+        // Act & Assert
+        Assert.DoesNotThrow(() => wrapper.StopListening());
+    }
+}
+
+[TestFixture]
+public class InterfaceTests
+{
+    [Test]
+    public void TcpClientWrapper_Implements_ITcpClient()
+    {
+        // Arrange
+        var wrapper = new TcpClientWrapper("localhost", 8080);
+
+        // Act & Assert
+        Assert.IsInstanceOf<ITcpClient>(wrapper);
+    }
+
+    [Test]
+    public void UdpClientWrapper_Implements_IUdpClient()
+    {
+        // Arrange
+        var wrapper = new UdpClientWrapper(5000);
+
+        // Act & Assert
+        Assert.IsInstanceOf<IUdpClient>(wrapper);
+    }
+}
+
+[TestFixture]
+[Category("Integration")]
+public class NetworkingIntegrationTests
+{
+    [Test]
+    public void TcpClientWrapper_CanBeInstantiated()
+    {
+        // Arrange & Act
+        var wrapper = new TcpClientWrapper("127.0.0.1", 8080);
+
+        // Assert
+        Assert.IsNotNull(wrapper);
+        Assert.IsFalse(wrapper.Connected);
+    }
+
+    [Test]
+    public void UdpClientWrapper_CanBeInstantiated()
+    {
+        // Arrange & Act
+        var wrapper = new UdpClientWrapper(5000);
+
+        // Assert
+        Assert.IsNotNull(wrapper);
+    }
 }
