@@ -1,22 +1,15 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace NetSdrClientApp.Networking
 {
     public class TcpClientWrapper : ITcpClient
     {
-        private string _host;
-        private int _port;
+        private string _host = null!;
+        private int _port = new int();
         private TcpClient? _tcpClient;
         private NetworkStream? _stream;
-        private CancellationTokenSource _cts;
+        private CancellationTokenSource _cts = new CancellationTokenSource(); // Initialize to avoid CS8618  
 
         public bool Connected => _tcpClient != null && _tcpClient.Connected && _stream != null;
 
@@ -60,9 +53,9 @@ namespace NetSdrClientApp.Networking
                 _stream?.Close();
                 _tcpClient?.Close();
 
-                _cts = null;
-                _tcpClient = null;
-                _stream = null;
+                _cts = null!;
+                _tcpClient = null!;
+                _stream = null!;
                 Console.WriteLine("Disconnected.");
             }
             else
@@ -104,7 +97,7 @@ namespace NetSdrClientApp.Networking
             {
                 try
                 {
-                    Console.WriteLine($"Starting listening for incomming messages.");
+                    Console.WriteLine($"Starting listening for incoming messages.");
 
                     while (!_cts.Token.IsCancellationRequested)
                     {
@@ -119,7 +112,7 @@ namespace NetSdrClientApp.Networking
                 }
                 catch (OperationCanceledException ex)
                 {
-                    //empty
+                    //empty  
                 }
                 catch (Exception ex)
                 {
