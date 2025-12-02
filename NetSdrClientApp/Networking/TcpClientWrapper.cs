@@ -1,5 +1,12 @@
-﻿using System.Net.Sockets;
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace NetSdrClientApp.Networking
 {
@@ -9,7 +16,7 @@ namespace NetSdrClientApp.Networking
         private int _port;
         private TcpClient? _tcpClient;
         private NetworkStream? _stream;
-        private CancellationTokenSource? _cts;
+        private CancellationTokenSource _cts;
 
         public bool Connected => _tcpClient != null && _tcpClient.Connected && _stream != null;
 
@@ -47,7 +54,7 @@ namespace NetSdrClientApp.Networking
 
         public void Disconnect()
         {
-            if (_tcpClient?.Connected == true)
+            if (Connected)
             {
                 _cts?.Cancel();
                 _stream?.Close();
@@ -97,9 +104,9 @@ namespace NetSdrClientApp.Networking
             {
                 try
                 {
-                    Console.WriteLine($"Starting listening for incoming messages.");
+                    Console.WriteLine($"Starting listening for incomming messages.");
 
-                    while (_cts != null && !_cts.Token.IsCancellationRequested)
+                    while (!_cts.Token.IsCancellationRequested)
                     {
                         byte[] buffer = new byte[8194];
 
@@ -110,9 +117,9 @@ namespace NetSdrClientApp.Networking
                         }
                     }
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException ex)
                 {
-                    // Operation was cancelled, normal behavior
+                    //empty
                 }
                 catch (Exception ex)
                 {
