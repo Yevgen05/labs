@@ -10,8 +10,8 @@ using System.Threading.Tasks;
 /// Not for a review
 /// </summary>
 public class EchoServer : IDisposable
-{
-private readonly int _port;
+    {
+        private readonly int _port;
         private TcpListener? _listener;
         private readonly CancellationTokenSource _cancellationTokenSource;
         private bool _disposed;
@@ -35,8 +35,7 @@ private readonly int _port;
                     TcpClient client = await _listener.AcceptTcpClientAsync();
                     Console.WriteLine("Client connected.");
 
-                    _ = Task.Run(() => HandleClientAsync(client, _cancellationTokenSource.Token), 
-                        _cancellationTokenSource.Token);
+                    _ = Task.Run(() => HandleClientAsync(client, _cancellationTokenSource.Token));
                 }
             }
             catch (ObjectDisposedException)
@@ -51,30 +50,31 @@ private readonly int _port;
             Console.WriteLine("Server shutdown.");
         }
 
-        private async Task HandleClientAsync(TcpClient client, CancellationToken token)
+        private static async Task HandleClientAsync(TcpClient client, CancellationToken token)
         {
-            try
+            using (client)
+            using (NetworkStream stream = client.GetStream())
             {
-                await using NetworkStream stream = client.GetStream();
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-
-                while (!token.IsCancellationRequested && 
-                       (bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                try
                 {
-                    // Echo back the received message
-                    await stream.WriteAsync(buffer.AsMemory(0, bytesRead), token);
-                    Console.WriteLine($"Echoed {bytesRead} bytes to the client.");
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+
+                    while (!token.IsCancellationRequested && 
+                           (bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                    {
+                        await stream.WriteAsync(buffer, 0, bytesRead, token);
+                        Console.WriteLine($"Echoed {bytesRead} bytes to the client.");
+                    }
                 }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-            finally
-            {
-                client.Close();
-                Console.WriteLine("Client disconnected.");
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Console.WriteLine($"Error: {ex.Message}");
+                }
+                finally
+                {
+                    Console.WriteLine("Client disconnected.");
+                }
             }
         }
 
@@ -108,12 +108,11 @@ private readonly int _port;
         {
             using EchoServer server = new EchoServer(5000);
 
-            // Start the server in a separate task
             var serverTask = server.StartAsync();
 
-            string host = "127.0.0.1"; // Target IP
-            int port = 60000;          // Target Port
-            int intervalMilliseconds = 5000; // Send every 5 seconds
+            string host = "127.0.0.1";
+            int port = 60000;
+            int intervalMilliseconds = 5000;
 
             using (var sender = new UdpTimedSender(host, port))
             {
@@ -123,7 +122,7 @@ private readonly int _port;
                 Console.WriteLine("Press 'q' to quit...");
                 while (Console.ReadKey(intercept: true).Key != ConsoleKey.Q)
                 {
-                    // Just wait until 'q' is pressed
+                    // Wait for 'q'
                 }
 
                 sender.StopSending();
@@ -163,10 +162,8 @@ private readonly int _port;
         {
             try
             {
-                // Use thread-safe random number generator
                 byte[] samples = new byte[1024];
                 Random.Shared.NextBytes(samples);
-                
                 _counter++;
 
                 byte[] counterBytes = BitConverter.GetBytes(_counter);
@@ -181,7 +178,7 @@ private readonly int _port;
                 var endpoint = new IPEndPoint(IPAddress.Parse(_host), _port);
 
                 _udpClient.Send(msg, msg.Length, endpoint);
-                Console.WriteLine($"Message sent to {_host}:{_port} ");
+                Console.WriteLine($"Message sent to {_host}:{_port}");
             }
             catch (Exception ex)
             {
@@ -213,4 +210,4 @@ private readonly int _port;
                 _disposed = true;
             }
         }
-}
+    }

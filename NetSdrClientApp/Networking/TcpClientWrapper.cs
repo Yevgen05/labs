@@ -5,11 +5,11 @@ namespace NetSdrClientApp.Networking
 {
     public class TcpClientWrapper : ITcpClient
     {
-        private string _host = null!;
-        private int _port = new int();
+        private string _host;
+        private int _port;
         private TcpClient? _tcpClient;
         private NetworkStream? _stream;
-        private CancellationTokenSource _cts = new CancellationTokenSource(); // Initialize to avoid CS8618  
+        private CancellationTokenSource? _cts;
 
         public bool Connected => _tcpClient != null && _tcpClient.Connected && _stream != null;
 
@@ -47,21 +47,21 @@ namespace NetSdrClientApp.Networking
 
         public void Disconnect()
         {
-            if (Connected)
+            if (_tcpClient?.Connected == true)
             {
                 _cts?.Cancel();
                 _stream?.Close();
                 _tcpClient?.Close();
-                _cts?.Dispose();
-                _tcpClient = null!;
-                _stream = null!;
+
+                _cts = null;
+                _tcpClient = null;
+                _stream = null;
                 Console.WriteLine("Disconnected.");
             }
             else
             {
                 Console.WriteLine("No active connection to disconnect.");
             }
-            
         }
 
         public async Task SendMessageAsync(byte[] data)
@@ -99,7 +99,7 @@ namespace NetSdrClientApp.Networking
                 {
                     Console.WriteLine($"Starting listening for incoming messages.");
 
-                    while (!_cts.Token.IsCancellationRequested)
+                    while (_cts != null && !_cts.Token.IsCancellationRequested)
                     {
                         byte[] buffer = new byte[8194];
 
@@ -110,9 +110,9 @@ namespace NetSdrClientApp.Networking
                         }
                     }
                 }
-                catch (OperationCanceledException ex)
+                catch (OperationCanceledException)
                 {
-                    //empty  
+                    // Operation was cancelled, normal behavior
                 }
                 catch (Exception ex)
                 {

@@ -34,9 +34,9 @@ namespace NetSdrClientApp.Networking
                     Console.WriteLine($"Received from {result.RemoteEndPoint}");
                 }
             }
-            catch (OperationCanceledException ex)
+            catch (OperationCanceledException)
             {
-                //empty
+                // Operation was cancelled, normal behavior
             }
             catch (Exception ex)
             {
@@ -63,7 +63,6 @@ namespace NetSdrClientApp.Networking
             try
             {
                 _cts?.Cancel();
-                _cts?.Dispose();
                 _udpClient?.Close();
                 Console.WriteLine("Stopped listening for UDP messages.");
             }
