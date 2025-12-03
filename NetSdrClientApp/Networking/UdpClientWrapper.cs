@@ -1,86 +1,112 @@
-﻿using System.Net;
+﻿﻿using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace NetSdrClientApp.Networking
+namespace NetSdrClientApp.Networking;
+
+public class UdpClientWrapper : IUdpClient, IDisposable // <-- Implement IDisposable
 {
-    public class UdpClientWrapper : IUdpClient
+    private readonly IPEndPoint _localEndPoint;
+    private CancellationTokenSource? _cts;
+    private UdpClient? _udpClient;
+    
+    public event EventHandler<byte[]>? MessageReceived;
+
+    public UdpClientWrapper(int port)
     {
-        private readonly IPEndPoint _localEndPoint;
-        private CancellationTokenSource? _cts;
-        private UdpClient? _udpClient;
+        _localEndPoint = new IPEndPoint(IPAddress.Any, port);
+    }
 
-        public event EventHandler<byte[]>? MessageReceived;
+    public async Task StartListeningAsync()
+    {
+        _cts?.Dispose(); 
+        _cts = new CancellationTokenSource();
+        Console.WriteLine("Start listening for UDP messages...");
 
-        public UdpClientWrapper(int port)
+        try
         {
-            _localEndPoint = new IPEndPoint(IPAddress.Any, port);
-        }
-
-        public async Task StartListeningAsync()
-        {
-            _cts = new CancellationTokenSource();
-            Console.WriteLine("Start listening for UDP messages...");
-
-            try
+            _udpClient = new UdpClient(_localEndPoint);
+            while (!_cts.Token.IsCancellationRequested)
             {
-                _udpClient = new UdpClient(_localEndPoint);
-                while (!_cts.Token.IsCancellationRequested)
-                {
-                    UdpReceiveResult result = await _udpClient.ReceiveAsync(_cts.Token);
-                    MessageReceived?.Invoke(this, result.Buffer);
+                UdpReceiveResult result = await _udpClient.ReceiveAsync(_cts.Token);
+                MessageReceived?.Invoke(this, result.Buffer);
 
-                    Console.WriteLine($"Received from {result.RemoteEndPoint}");
-                }
-            }
-            catch (OperationCanceledException ex)
-            {
-                //empty
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error receiving message: {ex.Message}");
+                Console.WriteLine($"Received from {result.RemoteEndPoint}");
             }
         }
-
-        public void StopListening()
+        catch (OperationCanceledException)
         {
-            try
-            {
-                _cts?.Cancel();
-                _udpClient?.Close();
-                Console.WriteLine("Stopped listening for UDP messages.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error while stopping: {ex.Message}");
-            }
+            //empty
         }
-
-        public void Exit()
+        catch (Exception ex)
         {
-            try
-            {
-                _cts?.Cancel();
-                _cts?.Dispose();
-                _udpClient?.Close();
-                Console.WriteLine("Stopped listening for UDP messages.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error while stopping: {ex.Message}");
-            }
+            Console.WriteLine($"Error receiving message: {ex.Message}");
         }
+    }
 
-        public override int GetHashCode()
+    public void StopListening()
+    {
+        try
         {
-            var payload = $"{nameof(UdpClientWrapper)}|{_localEndPoint.Address}|{_localEndPoint.Port}";
+            _cts?.Cancel();
+            _udpClient?.Close();
+            Console.WriteLine("Stopped listening for UDP messages.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error while stopping: {ex.Message}");
+        }
+    }
 
-            using var md5 = MD5.Create();
-            var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(payload));
+    public void Exit()
+    {
+        StopListening();
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+    
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!disposing) return;
+    
+        try
+        {
+            StopListening();
+            _udpClient?.Dispose();
+            _cts?.Dispose();
+        }
+        catch
+        {
+            // Swallow exceptions during dispose
+        }
+    }
+
+    public override int GetHashCode()
+    {
+        var payload = $"{_localEndPoint.Address}|{_localEndPoint.Port}";
+
+        var hashProvider = SHA512.Create();
+
+        using (hashProvider)
+        {
+            var hash = hashProvider.ComputeHash(Encoding.UTF8.GetBytes(payload));
 
             return BitConverter.ToInt32(hash, 0);
         }
+    }
+
+    public override bool Equals(object? obj)
+    {
+        if (obj is UdpClientWrapper other)
+        {
+            return _localEndPoint.Equals(other._localEndPoint);
+        }
+
+        return false; 
     }
 }

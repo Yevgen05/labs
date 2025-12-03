@@ -1,15 +1,19 @@
-﻿using System.Net.Sockets;
+﻿﻿using System;
+using System.Linq;
+using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace NetSdrClientApp.Networking
 {
     public class TcpClientWrapper : ITcpClient
     {
-        private string _host = null!;
-        private int _port = new int();
+        private string _host;
+        private int _port;
         private TcpClient? _tcpClient;
         private NetworkStream? _stream;
-        private CancellationTokenSource _cts = new CancellationTokenSource(); // Initialize to avoid CS8618  
+        private CancellationTokenSource? _cts;
 
         public bool Connected => _tcpClient != null && _tcpClient.Connected && _stream != null;
 
@@ -30,7 +34,6 @@ namespace NetSdrClientApp.Networking
             }
 
             _tcpClient = new TcpClient();
-
             try
             {
                 _cts = new CancellationTokenSource();
@@ -53,18 +56,19 @@ namespace NetSdrClientApp.Networking
                 _stream?.Close();
                 _tcpClient?.Close();
                 _cts?.Dispose();
-                _tcpClient = null!;
-                _stream = null!;
+                _cts = null;
+                _tcpClient = null;
+                _stream = null;
                 Console.WriteLine("Disconnected.");
             }
             else
             {
                 Console.WriteLine("No active connection to disconnect.");
             }
-            
         }
 
-        public async Task SendMessageAsync(byte[] data)
+        // Generalized send message method to handle both byte[] and string
+        private async Task SendMessageAsyncInternal(byte[] data)
         {
             if (Connected && _stream != null && _stream.CanWrite)
             {
@@ -75,20 +79,17 @@ namespace NetSdrClientApp.Networking
             {
                 throw new InvalidOperationException("Not connected to a server.");
             }
+        }
+
+        public async Task SendMessageAsync(byte[] data)
+        {
+            await SendMessageAsyncInternal(data); 
         }
 
         public async Task SendMessageAsync(string str)
         {
             var data = Encoding.UTF8.GetBytes(str);
-            if (Connected && _stream != null && _stream.CanWrite)
-            {
-                Console.WriteLine($"Message sent: " + data.Select(b => Convert.ToString(b, toBase: 16)).Aggregate((l, r) => $"{l} {r}"));
-                await _stream.WriteAsync(data, 0, data.Length);
-            }
-            else
-            {
-                throw new InvalidOperationException("Not connected to a server.");
-            }
+            await SendMessageAsyncInternal(data); 
         }
 
         private async Task StartListeningAsync()
@@ -98,11 +99,9 @@ namespace NetSdrClientApp.Networking
                 try
                 {
                     Console.WriteLine($"Starting listening for incoming messages.");
-
                     while (!_cts.Token.IsCancellationRequested)
                     {
                         byte[] buffer = new byte[8194];
-
                         int bytesRead = await _stream.ReadAsync(buffer, 0, buffer.Length, _cts.Token);
                         if (bytesRead > 0)
                         {
@@ -110,9 +109,9 @@ namespace NetSdrClientApp.Networking
                         }
                     }
                 }
-                catch (OperationCanceledException ex)
+                catch (OperationCanceledException)
                 {
-                    //empty  
+                    //empty
                 }
                 catch (Exception ex)
                 {
@@ -129,5 +128,4 @@ namespace NetSdrClientApp.Networking
             }
         }
     }
-
 }

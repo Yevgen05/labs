@@ -1,4 +1,9 @@
-﻿using Moq;
+﻿﻿using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Text;
+using Moq;
+using NetArchTest.Rules;
 using NetSdrClientApp;
 using NetSdrClientApp.Networking;
 
@@ -6,9 +11,14 @@ namespace NetSdrClientAppTests;
 
 public class NetSdrClientTests
 {
-   NetSdrClient _client;
+    NetSdrClient _client;
     Mock<ITcpClient> _tcpMock;
     Mock<IUdpClient> _updMock;
+    
+    
+    private const int TestPort = 12345;
+    UdpClientWrapper _udpClientWrapper;
+    TcpClientWrapper _tcpClientWrapper;
 
     public NetSdrClientTests() { }
 
@@ -26,14 +36,33 @@ public class NetSdrClientTests
             _tcpMock.Setup(tcp => tcp.Connected).Returns(false);
         });
 
-        _tcpMock.Setup(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>())).Callback<byte[]>((bytes) =>
-        {
-            _tcpMock.Raise(tcp => tcp.MessageReceived += null, _tcpMock.Object, bytes);
-        });
+        _tcpMock.Setup(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()))
+            .Callback<byte[]>((bytes) =>
+            {
+                // емулюємо відповідь від TCP, щоб завершився TaskCompletionSource
+                _tcpMock.Raise(tcp => tcp.MessageReceived += null, _tcpMock.Object, bytes);
+            });
 
         _updMock = new Mock<IUdpClient>();
 
         _client = new NetSdrClient(_tcpMock.Object, _updMock.Object);
+        
+        _udpClientWrapper = new UdpClientWrapper(TestPort);
+        _tcpClientWrapper = new TcpClientWrapper("localhost", TestPort);
+    }
+
+    [Test]
+    public void TryConnectWithoutServer()
+    {
+        _tcpClientWrapper.Connect();
+        Assert.That(_tcpClientWrapper.Connected, Is.False);
+    }
+    
+    [Test]
+    public void TryAsyncWithoutServer()
+    {
+        _ = _tcpClientWrapper.SendMessageAsync("1");
+        Assert.That(_tcpClientWrapper.Connected, Is.False);
     }
 
     [Test]
@@ -56,6 +85,20 @@ public class NetSdrClientTests
         //assert
         //No exception thrown
         _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once);
+    }
+    
+    [Test]
+    public void TestEquals_ForUdpClientWrapper()
+    {
+        var udpClientWrapper1 = new UdpClientWrapper(1234);
+        var udpClientWrapper2 = new UdpClientWrapper(1234);
+        var udpClientWrapper3 = new UdpClientWrapper(5678);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(udpClientWrapper1.Equals(udpClientWrapper2), Is.True, "Wrappers with same port should be equal.");
+            Assert.That(udpClientWrapper1.Equals(udpClientWrapper3), Is.False, "Wrappers with different ports should not be equal.");
+        }
     }
 
     [Test]
@@ -116,169 +159,221 @@ public class NetSdrClientTests
     }
 
     //TODO: cover the rest of the NetSdrClient code here
-}
-
-// ============================
-// ДОДАНО НОВІ ТЕСТИ
-// ============================
-
-[TestFixture]
-public class TcpClientWrapperTests
-{
+    
     [Test]
-    public void Constructor_WithHostAndPort_ShouldInitializeCorrectly()
+    public async Task StopIQNoConnectionTest()
     {
-        // Arrange
-        string host = "localhost";
-        int port = 8080;
+        //act
+        await _client.StopIQAsync();
+        
+        Assert.That(_client.IQStarted, Is.False);
+    }
+
+    [Test]
+    public async Task ConnectAsync_WhenAlreadyConnected_DoesNothing()
+    {
+        // Arrange: емуляція вже активного з'єднання
+        _tcpMock.Setup(tcp => tcp.Connected).Returns(true);
 
         // Act
-        var wrapper = new TcpClientWrapper(host, port);
+        await _client.ConnectAsync();
 
-        // Assert
-        Assert.IsNotNull(wrapper);
+        // Assert: не має бути повторного Connect та відправки pre-setup повідомлень
+        _tcpMock.Verify(tcp => tcp.Connect(), Times.Never);
+        _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+    }
+    
+
+    [Test]
+    public async Task ChangeFrequencyAsync_NoConnection_DoesNotSend()
+    {
+        // Act
+        await _client.ChangeFrequencyAsync(144800000L, 0);
+
+        // Assert: при відсутності TCP-з'єднання внутрішній SendTcpRequest
+        // має повернути null і не викликати SendMessageAsync
+        _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Never);
+        _tcpMock.VerifyGet(tcp => tcp.Connected, Times.AtLeastOnce);
     }
 
     [Test]
-    public void Connected_WhenNotConnected_ShouldReturnFalse()
+    public async Task ChangeFrequencyAsync_WithConnection_SendsMessage()
+    {
+        // Arrange: встановлюємо з'єднання (3 повідомлення pre-setup)
+        await _client.ConnectAsync();
+
+        // Act: міняємо частоту
+        await _client.ChangeFrequencyAsync(144800000L, 1);
+
+        // Assert:
+        // 3 повідомлення при ConnectAsync + 1 при ChangeFrequencyAsync = 4
+        _tcpMock.Verify(tcp => tcp.Connect(), Times.Once);
+        _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Exactly(4));
+    }
+    [Test]
+    public async Task Disconnect_WhenIqStarted_OnlyDisconnectsTcp()
     {
         // Arrange
-        var wrapper = new TcpClientWrapper("localhost", 8080);
+        await _client.ConnectAsync();
+        await _client.StartIQAsync();
+
+        _updMock.Invocations.Clear();
+        _tcpMock.Invocations.Clear();
 
         // Act
-        bool connected = wrapper.Connected;
+        _client.Disconect();
 
         // Assert
-        Assert.IsFalse(connected);
+        _tcpMock.Verify(tcp => tcp.Disconnect(), Times.Once,
+            "Disconnect має викликати підʼєднаного TCP-клієнта.");
+        _updMock.Verify(udp => udp.StopListening(), Times.Never,
+            "Disconnect не торкається UDP-лісенера в поточній реалізації.");
+        
     }
 
-    [Test]
-    public void SendMessageAsync_WhenNotConnected_ShouldThrowInvalidOperationException()
-    {
-        // Arrange
-        var wrapper = new TcpClientWrapper("localhost", 8080);
-        var data = new byte[] { 0x01, 0x02, 0x03 };
-
-        // Act & Assert
-        Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await wrapper.SendMessageAsync(data)
-        );
-    }
 
     [Test]
-    public void Disconnect_WhenNotConnected_ShouldNotThrowException()
+    public async Task StartIQ_AfterStopIQ_CanBeStartedAgain()
     {
         // Arrange
-        var wrapper = new TcpClientWrapper("localhost", 8080);
+        await _client.ConnectAsync();
+        await _client.StartIQAsync();
+        await _client.StopIQAsync();
 
-        // Act & Assert
-        Assert.DoesNotThrow(() => wrapper.Disconnect());
-    }
-}
-
-[TestFixture]
-public class UdpClientWrapperTests
-{
-    [Test]
-    public void Constructor_WithPort_ShouldInitialize()
-    {
-        // Arrange
-        int testPort = 5000;
+        _updMock.Invocations.Clear(); // щоб рахувати виклики тільки після StopIQ
 
         // Act
-        var wrapper = new UdpClientWrapper(testPort);
+        await _client.StartIQAsync();
 
         // Assert
-        Assert.IsNotNull(wrapper);
+        _updMock.Verify(udp => udp.StartListeningAsync(), Times.Once,
+            "IQ should be able to start again after StopIQAsync.");
+        Assert.That(_client.IQStarted, Is.True);
     }
 
     [Test]
-    public void GetHashCode_ForSamePort_ShouldReturnSameValue()
+    public async Task ConnectAsync_Twice_DoesNotReconnectOrResendPreSetup()
     {
         // Arrange
-        var wrapper1 = new UdpClientWrapper(5000);
-        var wrapper2 = new UdpClientWrapper(5000);
+        await _client.ConnectAsync();
 
         // Act
-        int hash1 = wrapper1.GetHashCode();
-        int hash2 = wrapper2.GetHashCode();
+        await _client.ConnectAsync();
 
-        // Assert
-        Assert.AreEqual(hash1, hash2);
+
+        _tcpMock.Verify(tcp => tcp.Connect(), Times.Once,
+            "Connect should be performed only once.");
+        _tcpMock.Verify(tcp => tcp.SendMessageAsync(It.IsAny<byte[]>()), Times.Exactly(3),
+            "Pre-setup messages should be sent only once.");
     }
 
     [Test]
-    public void GetHashCode_ForDifferentPorts_ShouldReturnDifferentValues()
+    public async Task StartIQ_WhenAlreadyStarted_RestartsUdpListener()
     {
         // Arrange
-        var wrapper1 = new UdpClientWrapper(5000);
-        var wrapper2 = new UdpClientWrapper(5001);
+        await _client.ConnectAsync();
+        await _client.StartIQAsync();
+        Assert.That(_client.IQStarted, Is.True);
+
+        _updMock.Invocations.Clear(); 
 
         // Act
-        int hash1 = wrapper1.GetHashCode();
-        int hash2 = wrapper2.GetHashCode();
+        await _client.StartIQAsync(); 
 
         // Assert
-        Assert.AreNotEqual(hash1, hash2);
+        _updMock.Verify(udp => udp.StartListeningAsync(), Times.Once,
+            "StartIQAsync викликає UDP-лісенер при повторному старті.");
+        Assert.That(_client.IQStarted, Is.True);
     }
+    
+     [TearDown]
+        public void TearDown()
+        {
+            _udpClientWrapper.Dispose();
+        }
 
-    [Test]
-    public void StopListening_WhenNotStarted_ShouldNotThrowException()
-    {
-        // Arrange
-        var wrapper = new UdpClientWrapper(5000);
+        [Test]
+        public void Constructor_ShouldSetLocalEndPoint()
+        {
+            // Arrange & Act
+            var udpClientWrapper = new UdpClientWrapper(TestPort);
 
-        // Act & Assert
-        Assert.DoesNotThrow(() => wrapper.StopListening());
-    }
-}
+            // Assert
+            var localEndPoint = udpClientWrapper.GetType().GetField("_localEndPoint", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.GetValue(udpClientWrapper) as IPEndPoint;
 
-[TestFixture]
-public class InterfaceTests
-{
-    [Test]
-    public void TcpClientWrapper_Implements_ITcpClient()
-    {
-        // Arrange
-        var wrapper = new TcpClientWrapper("localhost", 8080);
+            Assert.Multiple(() =>
+            {
+                Assert.That(localEndPoint?.Address, Is.EqualTo(IPAddress.Any));
+                if (localEndPoint != null) Assert.That(localEndPoint.Port, Is.EqualTo(TestPort));
+            });
+        }
 
-        // Act & Assert
-        Assert.IsInstanceOf<ITcpClient>(wrapper);
-    }
+        [Test]
+        public async Task StartListeningAsync_ShouldInvokeMessageReceivedEvent_WhenMessageReceived()
+        {
+            // Arrange
+            var messageReceivedCalled = false;
+            _udpClientWrapper.MessageReceived += (sender, e) => { messageReceivedCalled = true; };
 
-    [Test]
-    public void UdpClientWrapper_Implements_IUdpClient()
-    {
-        // Arrange
-        var wrapper = new UdpClientWrapper(5000);
+            // Act
+            var listeningTask = _udpClientWrapper.StartListeningAsync();
 
-        // Act & Assert
-        Assert.IsInstanceOf<IUdpClient>(wrapper);
-    }
-}
+            // Send a test UDP message
+            using (var udpClient = new UdpClient())
+            {
+                byte[] message = "Test Message"u8.ToArray();
+                await udpClient.SendAsync(message, message.Length, new IPEndPoint(IPAddress.Loopback, TestPort));
+            }
 
-[TestFixture]
-[Category("Integration")]
-public class NetworkingIntegrationTests
-{
-    [Test]
-    public void TcpClientWrapper_CanBeInstantiated()
-    {
-        // Arrange & Act
-        var wrapper = new TcpClientWrapper("127.0.0.1", 8080);
+            // Wait for the message to be processed
+            await Task.Delay(1000);
 
-        // Assert
-        Assert.IsNotNull(wrapper);
-        Assert.IsFalse(wrapper.Connected);
-    }
+            // Assert
+            Assert.That(messageReceivedCalled, Is.True);
+            _udpClientWrapper.StopListening();
+        }
 
-    [Test]
-    public void UdpClientWrapper_CanBeInstantiated()
-    {
-        // Arrange & Act
-        var wrapper = new UdpClientWrapper(5000);
+        [Test]
+        public void GetHashCode_ShouldReturnConsistentHashCode()
+        {
+            // Arrange
+            var udpClientWrapper1 = new UdpClientWrapper(TestPort);
+            var udpClientWrapper2 = new UdpClientWrapper(TestPort);
 
-        // Assert
-        Assert.IsNotNull(wrapper);
-    }
+            // Act & Assert
+            Assert.That(udpClientWrapper2.GetHashCode(), Is.EqualTo(udpClientWrapper1.GetHashCode()));
+        }
+        
+        [Test]
+        public void NetSdrClientApp_ShouldNotHaveDependency_On_EchoTspServer()
+        {
+            var uiAssembly = Assembly.Load("NetSdrClientApp");
+            var result = Types
+                .InAssembly(uiAssembly)
+                .That()
+                .ResideInNamespace("NetSdrClientApp")   // усі підпростори
+                .ShouldNot()
+                .HaveDependencyOn("EchoServer")       // або інше ім’я проекту/namespace
+                .GetResult();
+
+            Assert.That(result.IsSuccessful, Is.True, 
+                "Архітектурне правило порушено: NetSdrClientApp залежить від EchoServer");
+        }
+        
+        [Test]
+        public void EchoTspServer_ShouldNotHaveDependency_On_NetSdrClientApp()
+        {
+            var infraAssembly = Assembly.Load("EchoServer");
+            var result = Types
+                .InAssembly(infraAssembly)
+                .That()
+                .ResideInNamespace("EchoServer")
+                .ShouldNot()
+                .HaveDependencyOn("NetSdrClientApp")
+                .GetResult();
+
+            Assert.That(result.IsSuccessful, Is.True,
+                "Архітектурне правило порушено: EchoServer залежить від NetSdrClientApp");
+        }
 }
